@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
+import { getAuthState, setAuthState, clearAuthState, authenticateUser, type LoginCredentials } from "@/lib/auth";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
 
@@ -146,6 +147,20 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     defaultValue: envAssistantId || "",
   });
 
+  // Add authentication state management with URL query support
+  const [username, setUsername] = useQueryState("username", {
+    defaultValue: "",
+  });
+  const [password, setPassword] = useQueryState("password", {
+    defaultValue: "",
+  });
+
+  // Authentication state from localStorage
+  const [authState, setAuthStateLocal] = useState(() => {
+    const stored = getAuthState();
+    return stored || { isAuthenticated: false };
+  });
+
   // For API key, use localStorage with env var fallback
   const [apiKey, _setApiKey] = useState(() => {
     const storedKey = getApiKey();
@@ -156,6 +171,125 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     window.localStorage.setItem("lg:chat:apiKey", key);
     _setApiKey(key);
   };
+
+  // Auto-login if username and password are provided via URL
+  useEffect(() => {
+    if (username && password && !authState.isAuthenticated) {
+      const credentials: LoginCredentials = { username, password };
+      if (authenticateUser(credentials)) {
+        const newAuthState = { isAuthenticated: true, username };
+        setAuthState(newAuthState);
+        setAuthStateLocal(newAuthState);
+        toast.success(`欢迎，${username}！`);
+      } else {
+        toast.error("登录失败，请检查用户名和密码");
+      }
+    }
+  }, [username, password, authState.isAuthenticated]);
+
+  // Show login form if not authenticated
+  if (!authState.isAuthenticated) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center p-4">
+        <div className="animate-in fade-in-0 zoom-in-95 bg-background flex max-w-3xl flex-col rounded-lg border shadow-lg">
+          <div className="mt-14 flex flex-col gap-2 border-b p-6">
+            <div className="flex flex-col items-start gap-2">
+              <LangGraphLogoSVG className="h-7" />
+              <h1 className="text-xl font-semibold tracking-tight">
+                Agent Chat - 登录
+              </h1>
+            </div>
+            <p className="text-muted-foreground">
+              请登录以访问 Agent Chat。您可以输入任意用户名和密码进行登录。
+            </p>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+
+              const form = e.target as HTMLFormElement;
+              const formData = new FormData(form);
+              const formUsername = formData.get("username") as string;
+              const formPassword = formData.get("password") as string;
+
+              const credentials: LoginCredentials = { 
+                username: formUsername, 
+                password: formPassword 
+              };
+
+              if (authenticateUser(credentials)) {
+                const newAuthState = { isAuthenticated: true, username: formUsername };
+                setAuthState(newAuthState);
+                setAuthStateLocal(newAuthState);
+                setUsername(formUsername);
+                setPassword(formPassword);
+                toast.success(`欢迎，${formUsername}！`);
+              } else {
+                toast.error("登录失败，请检查用户名和密码");
+              }
+            }}
+            className="bg-muted/50 flex flex-col gap-6 p-6"
+          >
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="username">
+                用户名<span className="text-rose-500">*</span>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                请输入您的用户名。您也可以通过URL参数 ?username=your_username 传入。
+              </p>
+              <Input
+                id="username"
+                name="username"
+                className="bg-background"
+                defaultValue={username || ""}
+                required
+                placeholder="请输入用户名"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="password">
+                密码<span className="text-rose-500">*</span>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                请输入您的密码。您也可以通过URL参数 ?password=your_password 传入。
+              </p>
+              <PasswordInput
+                id="password"
+                name="password"
+                defaultValue={password || ""}
+                className="bg-background"
+                placeholder="请输入密码"
+                required
+              />
+            </div>
+
+            <div className="mt-2 flex justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  clearAuthState();
+                  setUsername("");
+                  setPassword("");
+                  toast.info("已清除登录状态");
+                }}
+              >
+                清除状态
+              </Button>
+              <Button
+                type="submit"
+                size="lg"
+              >
+                登录
+                <ArrowRight className="size-5" />
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   // Determine final values to use, prioritizing URL params then env vars
   const finalApiUrl = apiUrl || envApiUrl;
@@ -172,6 +306,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               <h1 className="text-xl font-semibold tracking-tight">
                 Agent Chat
               </h1>
+              {authState.username && (
+                <p className="text-sm text-muted-foreground">
+                  已登录用户: <span className="font-medium">{authState.username}</span>
+                </p>
+              )}
             </div>
             <p className="text-muted-foreground">
               Welcome to Agent Chat! Before you get started, you need to enter
@@ -208,7 +347,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 id="apiUrl"
                 name="apiUrl"
                 className="bg-background"
-                defaultValue={apiUrl || DEFAULT_API_URL}
+                defaultValue={finalApiUrl || DEFAULT_API_URL}
                 required
               />
             </div>
@@ -226,7 +365,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 id="assistantId"
                 name="assistantId"
                 className="bg-background"
-                defaultValue={assistantId || DEFAULT_ASSISTANT_ID}
+                defaultValue={finalAssistantId || DEFAULT_ASSISTANT_ID}
                 required
               />
             </div>
@@ -248,7 +387,20 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               />
             </div>
 
-            <div className="mt-2 flex justify-end">
+            <div className="mt-2 flex justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  clearAuthState();
+                  setAuthStateLocal({ isAuthenticated: false });
+                  setUsername("");
+                  setPassword("");
+                  toast.info("已退出登录");
+                }}
+              >
+                退出登录
+              </Button>
               <Button
                 type="submit"
                 size="lg"
